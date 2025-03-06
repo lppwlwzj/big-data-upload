@@ -17,6 +17,7 @@ interface ImageUploadProps {
   onSuccess?: (files: UploadedFile[]) => void;
 }
 
+//自动上传
 const ImageUpload: React.FC<ImageUploadProps> = ({
   multiple = false,
   maxCount = 5,
