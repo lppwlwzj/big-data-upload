@@ -7,7 +7,7 @@
     "skipLibCheck": true,
     "noUnusedLocals": false,  // 关闭未使用的局部变量检查
     "noUnusedParameters": false,  // 关闭未使用的参数检查
-
+    "noImplicitAny": false,
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

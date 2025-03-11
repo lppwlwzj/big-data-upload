@@ -6,7 +6,7 @@ self.onmessage = (event) => {
   //通过chunkList 生成文件hash
   createFileHashByChunks(chunkList);
   //通过文件生成hash
-  createFileHashByFile(file);
+  // createFileHashByFile(file);
 };
 
 const createFileHashByChunks = (chunkList) => {
