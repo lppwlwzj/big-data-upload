@@ -34,7 +34,6 @@ type PromiseResult<T> = {
 // 定义请求工厂函数类型
 type PromiseFn<T> = () => Promise<T>;
 
-
 export const promiseLimiter = <T>(
   promises: PromiseFn<T>[],
   limit: number,
@@ -60,10 +59,10 @@ export const promiseLimiter = <T>(
 
       // 这里才真正创建并执行 Promise
       const task = _promise();
-      
+
       // 添加超时控制
       const timeoutPromise = new Promise<T>((_, reject) => {
-        setTimeout(() => reject(new Error('Request timeout')), timeout);
+        setTimeout(() => reject(new Error("Request timeout")), timeout);
       });
 
       Promise.race([task, timeoutPromise])
@@ -76,11 +75,11 @@ export const promiseLimiter = <T>(
         .finally(() => {
           count--;
           completed++;
-          
+
           if (count < limit && queue.length) {
             runTask(promises.length - queue.length);
           }
-          
+
           if (completed === promises.length) {
             resolve(results);
           }
@@ -93,8 +92,6 @@ export const promiseLimiter = <T>(
     }
   });
 };
-
-
 
 //法二
 // const requestQueue = (concurrency: number) => {

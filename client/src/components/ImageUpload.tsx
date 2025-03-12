@@ -19,10 +19,6 @@ interface ImageUploadProps {
   onSuccess?: (files: UploadedFile[]) => void;
 }
 
-interface fileProps {
-  hash: string;
-  filename: string;
-}
 
 interface Response<T> {
   code: number;
@@ -35,6 +31,12 @@ interface VerifyRes {
   hasUploadList: string[];
 }
 
+interface ChunkResponse {
+  code: number;
+  message: string;
+  re: null;
+}
+
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
 const ImageUpload: React.FC<ImageUploadProps> = ({
   multiple = false,
@@ -43,7 +45,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
 }) => {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadFile, setUploadFile] = useState<fileProps>();
   const [requestList, setRequestList] = useState<XMLHttpRequest[]>();
 
   // 单个大文件上传
@@ -61,11 +62,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         size: item.size
       };
     });
-    // 设置上传文信息
-    setUploadFile({
-      hash: fileHash,
-      filename: file.name
-    });
+
     // 第三步：校验文件是否已上传，如果已上传直接返回上传完成，如果未上传，返回未上传的切片
     const res = await verifyUpload(fileHash, file.name);
     // 第四步：上传剩余切片
@@ -73,56 +70,63 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
       alert("文件秒传！");
       return;
     }
-    await uploadChunks(allUploadList, res.re.hasUploadList);
+    const result = await uploadChunks(
+      allUploadList,
+      res.re.hasUploadList,
+      fileHash,
+      file.name
+    );
+    if (result && result.some((r) => r.data.code !== 1)) {
+      alert("上传失败");
+      return;
+    }
 
     // 第五步：合并切片
-    await mergeChunks();
+    await mergeChunks(fileHash, file.name);
 
     // 第六步：返回上传完成
   };
   const uploadChunks = async (
     allUploadList: any[],
-    hasUploadList: string[]
+    hasUploadList: string[],
+    fileHash: string,
+    filename: string
   ) => {
     //过滤出需要上传的切片
     const shoudldUploadList = allUploadList
       .filter((item) => !hasUploadList.includes(item.hash))
       .map(({ chunk, hash, index }) => {
-        if (!uploadFile?.filename || !uploadFile?.hash) return null;
         const formData = new FormData();
         formData.append("chunk", chunk);
         formData.append("index", index);
         formData.append("hash", hash);
-        formData.append("filename", uploadFile.filename);
-        formData.append("fileHash", uploadFile.hash);
+        formData.append("filename", filename);
+        formData.append("fileHash", fileHash);
         return formData;
       })
-      .filter(Boolean)
       .map(
-        (formData) => () =>
-          request("/api/uploadChunk", {
-            method: "POST",
-            // headers: {
-            //   "Content-Type": "multipart/form-data"
-            // },
-            data: formData,
-            requestList
-          })
+        (formData): (() => Promise<ChunkResponse>) =>
+          () =>
+            request<ChunkResponse>("/api/uploadChunk", {
+              method: "POST",
+              data: formData,
+              requestList
+            })
       );
-    //控制请求数量
-    await promiseLimiter(shoudldUploadList, 2);
+
+    return await promiseLimiter<ChunkResponse>(shoudldUploadList, 5);
   };
 
-  const mergeChunks = async () => {
+  const mergeChunks = async (fileHash: string, filename: string) => {
     const res = await request(`/api/mergeChunks`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
       data: {
-        size:CHUNK_SIZE,
-        filename: uploadFile?.filename,
-        fileHash: uploadFile?.hash
+        size: CHUNK_SIZE,
+        filename,
+        fileHash
       },
       responseType: "json"
     });

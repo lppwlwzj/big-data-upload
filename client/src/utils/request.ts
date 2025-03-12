@@ -4,15 +4,17 @@ interface RequestOptions extends RequestInit {
   requestList?: XMLHttpRequest[];
 }
 
-export const request = <T>(url: string, options: RequestOptions) => {
-  return new Promise((resolve, reject) => {
+export const request = <T>(url: string, options: RequestOptions): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
     const {
       method = "POST",
       headers = { "content-type": "application/json" },
       data,
       responseType,
+      requestList,
       ...rest
     } = options;
+    console.log(url, data instanceof FormData);
     const xhr = new XMLHttpRequest();
 
     xhr.open(method, url);
@@ -30,18 +32,14 @@ export const request = <T>(url: string, options: RequestOptions) => {
     }
 
     // 发送数据，如果是 FormData 直接发送，否则转换为 JSON 字符串
-    xhr.send(
-      data instanceof FormData ? data : data ? JSON.stringify(data) : null
-    );
+    xhr.send(data instanceof FormData ? data : data ? JSON.stringify(data) : null);
 
     // 处理成功响应
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        if (options.requestList) {
-          const xhrIndex = options.requestList.findIndex(
-            (item) => item === xhr
-          );
-          options.requestList.splice(xhrIndex, 1);
+        if (requestList) {
+          const xhrIndex = requestList.findIndex((item) => item === xhr);
+          requestList.splice(xhrIndex, 1);
         }
 
         // 根据 responseType 处理响应
@@ -62,7 +60,6 @@ export const request = <T>(url: string, options: RequestOptions) => {
         } catch (error) {
           reject(new Error("Failed to parse response"));
         }
-        resolve(xhr.response);
       } else {
         reject(new Error(`Request failed with status ${xhr.status}`));
       }
@@ -72,6 +69,9 @@ export const request = <T>(url: string, options: RequestOptions) => {
     xhr.onerror = () => {
       reject(new Error("Network error"));
     };
-    options.requestList?.push(xhr);
+    
+    if (requestList) {
+      requestList.push(xhr);
+    }
   });
 };
