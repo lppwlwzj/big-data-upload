@@ -6,8 +6,8 @@ const multiparty = require("multiparty");
 const extractExt = (filename) =>
   filename.slice(filename.lastIndexOf("."), filename.length); // 提取后缀名
 
-const UPLOAD_DIR = path.resolve(__dirname, "..", "public", "upload");
-const TARGET_DIR = path.resolve(__dirname, "..", "public", "targets");
+const UPLOAD_DIR = path.resolve(__dirname, "..", "uploads");
+const TARGET_DIR = path.resolve(__dirname, "..", "target");
 
 // 确保上传目录存在
 fs.ensureDirSync(UPLOAD_DIR);
@@ -37,7 +37,7 @@ class UploadController {
     const { fileHash, filename } = req.body;
 
     const ext = extractExt(filename);
-    const filePath = path.resolve(UPLOAD_DIR, `${fileHash}${ext}`);
+    const filePath = path.resolve(TARGET_DIR, `${fileHash}${ext}`);
 
     if (fs.existsSync(filePath)) {
       res.send({
@@ -181,8 +181,8 @@ class UploadController {
       });
 
       await Promise.all(chunkStream);
-
-      await fs.rmdir(chunkDir);
+      // fs.rmdir 只能删除空目录
+      await fs.remove(chunkDir);
       res.send({
         code: 1,
         message: "合并成功",

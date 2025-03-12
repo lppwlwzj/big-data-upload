@@ -23,3 +23,5 @@ pnpm-debug.log*
 *.sw?
 /server/src/public/upload/*
 /server/src/public/targets/*
+/server/src/uploads/
+/server/src/target/
