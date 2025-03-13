@@ -2,6 +2,8 @@ interface RequestOptions extends RequestInit {
   data?: any;
   responseType?: "json" | "text" | "blob";
   requestList?: XMLHttpRequest[];
+  onProgress?: (progress: number) => void;
+  signal?: AbortSignal;
 }
 
 export const request = <T>(url: string, options: RequestOptions): Promise<T> => {
@@ -12,6 +14,8 @@ export const request = <T>(url: string, options: RequestOptions): Promise<T> => 
       data,
       responseType,
       requestList,
+      onProgress,
+      signal,
       ...rest
     } = options;
     console.log(url, data instanceof FormData);
@@ -21,6 +25,24 @@ export const request = <T>(url: string, options: RequestOptions): Promise<T> => 
 
     if (responseType) {
       xhr.responseType = responseType;
+    }
+
+    // 添加上传进度监听
+    if (onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = (event.loaded / event.total) * 100;
+          onProgress(percent);
+        }
+      };
+    }
+
+    // 添加 abort 信号监听
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        xhr.abort();
+        reject(new Error('Request aborted'));
+      });
     }
 
     // 如果不是 FormData，则设置默认的 content-type

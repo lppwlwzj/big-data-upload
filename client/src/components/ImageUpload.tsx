@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Upload, message, Button, Space } from "antd";
+import { Upload, message, Button, Space, Progress } from "antd";
 import { UploadOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import type { RcFile, UploadFile, UploadProps } from "antd/es/upload/interface";
 import { request } from "../utils/request";
@@ -58,50 +58,67 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
   const [uploading, setUploading] = useState(false);
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
   const [allUploadList, setAllUploadList] = useState<UploadChunkFile[]>([]);
+  const [totalProgress, setTotalProgress] = useState(0);
+  const [currentChunkProgress, setCurrentChunkProgress] = useState(0);
+  const [hashProgress, setHashProgress] = useState(0);
 
   // 单个大文件上传
   const handleSingleUpload = async (file: RcFile) => {
-    // 第一步：生成全部的文件切片
-    const allChunks = await generateChunks(file);
-    // 第二步：生成整个文件的hash
-    const fileHash = (await generateHash(allChunks)) as string;
-    //处理文件切片hash
-    const allUploadList = allChunks.map((item, index) => {
-      return {
-        index: index,
-        hash: fileHash + "-" + index,
-        chunk: item,
-        size: item.size
-      };
-    });
-    setAllUploadList(allUploadList);
-    setFileInfo({
-      fileHash: fileHash,
-      filename: file.name
-    });
+    setUploading(true);
+    setTotalProgress(0);
+    setCurrentChunkProgress(0);
+    setHashProgress(0);
+    
+    try {
+      // 第一步：生成全部的文件切片
+      const allChunks = await generateChunks(file);
+      // 第二步：生成整个文件的hash
+      const fileHash = (await generateHash(allChunks)) as string;
+      //处理文件切片hash
+      const allUploadList = allChunks.map((item, index) => {
+        return {
+          index: index,
+          hash: fileHash + "-" + index,
+          chunk: item,
+          size: item.size
+        };
+      });
+      setAllUploadList(allUploadList);
+      setFileInfo({
+        fileHash: fileHash,
+        filename: file.name
+      });
 
-    // 第三步：校验文件是否已上传，如果已上传直接返回上传完成，如果未上传，返回未上传的切片
-    const res = await verifyUpload(fileHash, file.name);
-    // 第四步：上传剩余切片
-    if (!res.re.needUpload) {
-      alert("文件秒传！");
-      return;
+      // 第三步：校验文件是否已上传
+      const res = await verifyUpload(fileHash, file.name);
+      if (!res.re.needUpload) {
+        message.success("文件秒传成功！");
+        setTotalProgress(100);
+        setUploading(false);
+        return;
+      }
+
+      // 第四步：上传剩余切片
+      const result = await uploadChunks(
+        allUploadList,
+        res.re.hasUploadList,
+        fileHash,
+        file.name
+      );
+      if (result && result.some((r) => r.data.code !== 1)) {
+        message.error("上传失败");
+        return;
+      }
+
+      // 第五步：合并切片
+      await mergeChunks(fileHash, file.name);
+      message.success("上传成功！");
+      setTotalProgress(100);
+    } catch (error) {
+      message.error("上传失败：" + (error as Error).message);
+    } finally {
+      setUploading(false);
     }
-    const result = await uploadChunks(
-      allUploadList,
-      res.re.hasUploadList,
-      fileHash,
-      file.name
-    );
-    if (result && result.some((r) => r.data.code !== 1)) {
-      alert("上传失败");
-      return;
-    }
-
-    // 第五步：合并切片
-    await mergeChunks(fileHash, file.name);
-
-    // 第六步：返回上传完成
   };
   const uploadChunks = async (
     allUploadList: any[],
@@ -110,7 +127,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
     filename: string
   ) => {
     //过滤出需要上传的切片
-    const shoudldUploadList = allUploadList
+    const shouldUploadList = allUploadList
       .filter((item) => !hasUploadList.includes(item.hash))
       .map(({ chunk, hash, index }) => {
         const formData = new FormData();
@@ -122,31 +139,60 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         return formData;
       })
       .map(
-        (formData): (() => Promise<ChunkResponse>) =>
+        (formData, index, array): (() => Promise<ChunkResponse>) =>
           () =>
             request<ChunkResponse>("/api/uploadChunk", {
               method: "POST",
               data: formData,
-              requestList
+              requestList,
+              onProgress: (progress: number) => {
+                setCurrentChunkProgress(progress);
+                // 计算总体进度
+                const totalProgress = Math.floor(
+                  ((index + progress / 100) / array.length) * 100
+                );
+                setTotalProgress(totalProgress);
+              }
             })
       );
 
-    return await promiseLimiter<ChunkResponse>(shoudldUploadList, 5);
+    return await promiseLimiter<ChunkResponse>(shouldUploadList, 5);
   };
 
   const mergeChunks = async (fileHash: string, filename: string) => {
-    const res = await request(`/api/mergeChunks`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      data: {
-        size: CHUNK_SIZE,
-        filename,
-        fileHash
-      },
-      responseType: "json"
-    });
+    const maxRetries = 3;
+    const timeout = 30000; // 30秒超时
+    
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
+        const res = await request(`/api/mergeChunks`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          data: {
+            size: CHUNK_SIZE,
+            filename,
+            fileHash
+          },
+          responseType: "json",
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        return res;
+      } catch (error) {
+        console.error(`第 ${i + 1} 次合并尝试失败:`, error);
+        if (i === maxRetries - 1) {
+          throw new Error(`合并失败，已重试 ${maxRetries} 次`);
+        }
+        // 等待一段时间后重试
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+      }
+    }
   };
   const verifyUpload = async (fileHash: string, filename: string) => {
     const res = (await request(`/api/verifyFile`, {
@@ -169,7 +215,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
       worker.postMessage({ chunkList });
       worker.onmessage = (event) => {
         const { hash, hashPercentage } = event.data;
+        if (hashPercentage) {
+          setHashProgress(Math.floor(hashPercentage));
+        }
         if (hash) {
+          setHashProgress(100);
           resolve(hash);
         }
       };
@@ -230,32 +280,41 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
     requestList.forEach((item) => {
       item.abort();
     });
+    setCurrentChunkProgress(0);
   };
   const handleResume = async () => {
     if (!fileInfo) return;
-    // 恢复 promiseLimiter
-    resumeUpload();
-    const { fileHash, filename } = fileInfo;
-    // 第三步：校验文件是否已上传，如果已上传直接返回上传完成，如果未上传，返回未上传的切片
-    const res = await verifyUpload(fileHash, filename);
-    // 第四步：上传剩余切片
-    if (!res.re.needUpload) {
-      alert("文件秒传！");
-      return;
-    }
-    const result = await uploadChunks(
-      allUploadList,
-      res.re.hasUploadList,
-      fileHash,
-      filename
-    );
-    if (result && result.some((r) => r.data.code !== 1)) {
-      alert("上传失败");
-      return;
-    }
+    setUploading(true);
+    try {
+      const { fileHash, filename } = fileInfo;
+      // 第三步：校验文件是否已上传，如果已上传直接返回上传完成，如果未上传，返回未上传的切片
+      const res = await verifyUpload(fileHash, filename);
+      // 第四步：上传剩余切片
+      if (!res.re.needUpload) {
+        message.success("文件秒传成功！");
+        setTotalProgress(100);
+        return;
+      }
+      const result = await uploadChunks(
+        allUploadList,
+        res.re.hasUploadList,
+        fileHash,
+        filename
+      );
+      if (result && result.some((r) => r.data.code !== 1)) {
+        message.error("上传失败");
+        return;
+      }
 
-    // 第五步：合并切片
-    await mergeChunks(fileHash, filename);
+      // 第五步：合并切片
+      await mergeChunks(fileHash, filename);
+      message.success("上传成功！");
+      setTotalProgress(100);
+    } catch (error) {
+      message.error("恢复上传失败：" + (error as Error).message);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const uploadProps: UploadProps = {
@@ -294,11 +353,29 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
           {multiple ? "选择多张图片" : "选择图片"}
         </Button>
       </Upload>
+      
+      {hashProgress > 0 && hashProgress < 100 && (
+        <div style={{ marginTop: 16 }}>
+          <div>计算文件 Hash</div>
+          <Progress percent={hashProgress} />
+        </div>
+      )}
+      
+      {uploading && (
+        <div style={{ marginTop: 16 }}>
+          <div>总体上传进度</div>
+          <Progress percent={totalProgress} />
+          <div style={{ marginTop: 8 }}>当前分片上传进度</div>
+          <Progress percent={currentChunkProgress} />
+        </div>
+      )}
+
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-start"
+          justifyContent: "flex-start",
+          marginTop: 16
         }}
       >
         <Button
@@ -313,7 +390,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         <Button
           type="primary"
           onClick={handlePause}
-          disabled={fileList.length === 0}
+          disabled={fileList.length === 0 || !uploading}
           style={{ marginLeft: 16 }}
         >
           暂停
@@ -321,7 +398,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         <Button
           type="primary"
           onClick={handleResume}
-          disabled={fileList.length === 0}
+          disabled={fileList.length === 0 || uploading}
           style={{ marginLeft: 16 }}
         >
           恢复
