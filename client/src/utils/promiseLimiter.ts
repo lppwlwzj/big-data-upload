@@ -34,6 +34,17 @@ type PromiseResult<T> = {
 // 定义请求工厂函数类型
 type PromiseFn<T> = () => Promise<T>;
 
+// 添加暂停状态控制
+let isPaused = false;
+
+export const pauseUpload = () => {
+  isPaused = true;
+};
+
+export const resumeUpload = () => {
+  isPaused = false;
+};
+
 export const promiseLimiter = <T>(
   promises: PromiseFn<T>[],
   limit: number,
@@ -50,7 +61,8 @@ export const promiseLimiter = <T>(
     let completed = 0;
 
     const runTask = (index: number) => {
-      if (queue.length === 0) return;
+      // 如果暂停了，就不继续执行新的任务
+      if (isPaused || queue.length === 0) return;
 
       const _promise = queue.shift();
       if (!_promise) return;
@@ -76,7 +88,8 @@ export const promiseLimiter = <T>(
           count--;
           completed++;
 
-          if (count < limit && queue.length) {
+          // 只有在未暂停的情况下才继续执行下一个任务
+          if (!isPaused && count < limit && queue.length) {
             runTask(promises.length - queue.length);
           }
 

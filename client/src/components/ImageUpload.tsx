@@ -3,7 +3,7 @@ import { Upload, message, Button, Space } from "antd";
 import { UploadOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import type { RcFile, UploadFile, UploadProps } from "antd/es/upload/interface";
 import { request } from "../utils/request";
-import { promiseLimiter } from "../utils/promiseLimiter";
+import { promiseLimiter, pauseUpload, resumeUpload } from "../utils/promiseLimiter";
 
 interface UploadedFile {
   filename: string;
@@ -18,7 +18,6 @@ interface ImageUploadProps {
   maxCount?: number;
   onSuccess?: (files: UploadedFile[]) => void;
 }
-
 
 interface Response<T> {
   code: number;
@@ -37,6 +36,18 @@ interface ChunkResponse {
   re: null;
 }
 
+interface UploadChunkFile {
+  index: number;
+  hash: string;
+  chunk: Blob;
+  size: number;
+}
+
+interface FileInfo {
+  fileHash: string;
+  filename: string;
+}
+const requestList: XMLHttpRequest[] = [];
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
 const ImageUpload: React.FC<ImageUploadProps> = ({
   multiple = false,
@@ -45,7 +56,8 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
 }) => {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [requestList, setRequestList] = useState<XMLHttpRequest[]>();
+  const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
+  const [allUploadList, setAllUploadList] = useState<UploadChunkFile[]>([]);
 
   // 单个大文件上传
   const handleSingleUpload = async (file: RcFile) => {
@@ -61,6 +73,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
         chunk: item,
         size: item.size
       };
+    });
+    setAllUploadList(allUploadList);
+    setFileInfo({
+      fileHash: fileHash,
+      filename: file.name
     });
 
     // 第三步：校验文件是否已上传，如果已上传直接返回上传完成，如果未上传，返回未上传的切片
@@ -206,8 +223,40 @@ const ImageUpload: React.FC<ImageUploadProps> = ({
     // }
   };
 
-  const handlePause = () => {};
-  const handleResume = () => {};
+  const handlePause = () => {
+    // 先暂停 promiseLimiter
+    pauseUpload();
+    // 然后中断当前正在进行的请求
+    requestList.forEach((item) => {
+      item.abort();
+    });
+  };
+  const handleResume = async () => {
+    if (!fileInfo) return;
+    // 恢复 promiseLimiter
+    resumeUpload();
+    const { fileHash, filename } = fileInfo;
+    // 第三步：校验文件是否已上传，如果已上传直接返回上传完成，如果未上传，返回未上传的切片
+    const res = await verifyUpload(fileHash, filename);
+    // 第四步：上传剩余切片
+    if (!res.re.needUpload) {
+      alert("文件秒传！");
+      return;
+    }
+    const result = await uploadChunks(
+      allUploadList,
+      res.re.hasUploadList,
+      fileHash,
+      filename
+    );
+    if (result && result.some((r) => r.data.code !== 1)) {
+      alert("上传失败");
+      return;
+    }
+
+    // 第五步：合并切片
+    await mergeChunks(fileHash, filename);
+  };
 
   const uploadProps: UploadProps = {
     name: multiple ? "files" : "file",
